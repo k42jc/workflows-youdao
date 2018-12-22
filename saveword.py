@@ -4,6 +4,7 @@ import re
 import json
 import cookielib, urllib2, urllib
 import hashlib
+import datetime
 
 from workflow import Workflow
 
@@ -21,20 +22,21 @@ class SmartRedirectHandler(urllib2.HTTPRedirectHandler):
 
 cookie_filename = 'youdao_cookie'
 fake_header = [
-        ('User-Agent', 'Mozilla/5.0 (Macintosh Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36'),
-        ('Content-Type', 'application/x-www-form-urlencoded'),
-        ('Cache-Control', 'no-cache'),
-        ('Accept', '*/*'),
-        ('Connection', 'Keep-Alive'),
-    ]
-    
+    ('User-Agent', 'Mozilla/5.0 (Macintosh Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36'),
+    ('Content-Type', 'application/x-www-form-urlencoded'),
+    ('Cache-Control', 'no-cache'),
+    ('Accept', '*/*'),
+    ('Connection', 'Keep-Alive'),
+]
+
 class SaveWord(object):
 
-    def __init__(self, username, password, localfile, word):
-    
+    def __init__(self, username, password, localfile,textpath, word):
+
         self.username = username
         self.password = password
         self.localfile = localfile
+        self.localtext = textpath;
         self.word = word
         self.cj = cookielib.LWPCookieJar(cookie_filename)
         if os.access(cookie_filename, os.F_OK):
@@ -64,7 +66,9 @@ class SaveWord(object):
             'savelogin' : '1',
         })
         response = self.opener.open('https://logindict.youdao.com/login/acc/login', login_data)
-        if response.headers.get('Set-Cookie').find(self.username) > -1:
+        logined_cookie = response.headers.get('Set-Cookie')
+        wf.logger.debug('登录到有道词典结果：`%s`',logined_cookie)
+        if logined_cookie is not None and logined_cookie.find(self.username) > -1:
             self.cj.save(cookie_filename, ignore_discard=True, ignore_expires=True)
             return True
         else:
@@ -90,14 +94,43 @@ class SaveWord(object):
             value = '<![CDATA[' + item[i] + ']]>' if i in ["trans", "phonetic"] else item[i]
             item_xml = item_xml + '<' + i + '>' + value + '</' + i + '>\n'
         item_xml = item_xml + '</item>\n'
-        
+
         source_xml = re.sub('<item>(?:(?!<\/item>)[\s\S])*<word>'+ item.get("word") +'<\/word>[\s\S]*?<\/item>\n', '', source_xml)
         if source_xml.find('</wordbook>') > -1:
             source_xml = source_xml.replace('</wordbook>','') + item_xml
         else:
             source_xml = '<wordbook>\n' + item_xml
         return source_xml + '</wordbook>'
-        
+
+    # 保存到本地文本
+    def generateLocalText(self,source_text):
+        # 取每天日期作为标题区分
+        now_time = datetime.datetime.now()
+        title = now_time.strftime('%Y-%m-%d')
+        # 取记录时间点
+        # record_time = now_time.strftime('%H:%M:%S');
+        item = self.word
+        item_text = item.get("word")+' : '+item.get("trans")
+        if source_text.find(title) < 0:
+            source_text += title if source_text == '' else '\n' +title
+        return source_text + '\n' + item_text
+
+    # 生成md表格形式
+    def generateMarkdownTable(self,source_text):
+        # 取每天日期作为标题区分
+        now_time = datetime.datetime.now()
+        title = now_time.strftime('%Y-%m-%d')
+        # 添加标题
+        if source_text.find(title) < 0:
+            source_text += '## '+title if source_text == '' else '\n## '+title
+        # 检查每天数据下面是否有表格头
+        item = self.word
+        item_tb_title = '|单词|翻译|\n|---|---|'
+        if source_text.endswith(title):
+            source_text += item_tb_title if source_text == '' else '\n' + item_tb_title
+        item_tb_content = '|`' +item.get("word")+'`|`'+item.get("trans")+'`|'
+        return source_text + '\n' + item_tb_content
+
     def saveLocal(self):
         try:
             source_xml = ''
@@ -110,14 +143,41 @@ class SaveWord(object):
             f.close()
         except Exception,e:
             return e
+        # 保存本地txt文本
+        try:
+            source_text = ''
+            if os.path.exists(self.localtext):
+                f = open(self.localtext,'r')
+                source_text = f.read()
+                f.close()
+            f = open(self.localtext,'w')
+            f.write(self.generateLocalText(source_text))
+            f.close()
+        except Exception,e:
+            return e
+        # 保存本地md表格
+        try:
+            source_md = ''
+            localmd = self.localtext.replace('.txt','.md')
+            if os.path.exists(localmd):
+                f = open(localmd,'r')
+                source_md = f.read()
+                f.close()
+            f = open(localmd,'w')
+            f.write(self.generateMarkdownTable(source_md))
+            f.close()
+        except Exception,e:
+            return e
         return 0
-            
+
     def save(self, wf):
         if self.syncToYoudao() or (self.loginToYoudao() and self.syncToYoudao()):
-            print '已成功保存至线上单词本'
+            wf.logger.debug('保存单词到线上单词本，账号：`%s`',self.username)
         else:
-            result = self.saveLocal()
-            print result if result else '帐号出错，已临时保存至本地单词本'
+            wf.logger.debug('保存远程单词本失败...`%s`',self.username)
+        result = self.saveLocal()
+        wf.logger.debug('保存单词到本地`%s`',self.localtext)
+        #print result if result else '帐号出错，已临时保存至本地单词本'
 
 
 if __name__ == '__main__':
@@ -128,8 +188,9 @@ if __name__ == '__main__':
 
     username = sys.argv[ sys.argv.index('-username') + 1] if '-username' in sys.argv else None
     password = sys.argv[ sys.argv.index('-password') + 1] if '-password' in sys.argv else None
-    filepath = sys.argv[ sys.argv.index('-filepath') + 1] if '-filepath' in sys.argv else os.path.join(os.environ['HOME'] , 'Documents/Alfred-youdao-wordbook.xml') 
-    
+    filepath = sys.argv[ sys.argv.index('-filepath') + 1] if '-filepath' in sys.argv else os.path.join(os.environ['HOME'] , 'Documents/Alfred-youdao-wordbook.xml')
+    textpath = sys.argv[ sys.argv.index('-textpath') + 1] if '-textpath' in sys.argv else os.path.join(os.environ['HOME'] , 'Documents/youdao-wordbook.md')
+
     m2 = hashlib.md5()
     m2.update(password)
     password_md5 = m2.hexdigest()
@@ -142,7 +203,7 @@ if __name__ == '__main__':
         "progress" : "-1",
     }
 
-    saver = SaveWord(username, password_md5 , filepath, item)
+    saver = SaveWord(username, password_md5 , filepath, textpath, item)
     wf = Workflow()
-    
+
     sys.exit(wf.run(saver.save))
