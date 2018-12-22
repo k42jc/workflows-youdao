@@ -28,7 +28,7 @@
 
 ### 3、配置有道词典账号信息
 
-![image.png](http://ata2-img.cn-hangzhou.img-pub.aliyun-inc.com/7fe87188c4cca058d5b7425bd78119d9.png)
+![](http://ata2-img.cn-hangzhou.img-pub.aliyun-inc.com/7fe87188c4cca058d5b7425bd78119d9.png)
 
 ![image.png](http://ata2-img.cn-hangzhou.img-pub.aliyun-inc.com/3a0721c724ddec2c69baed82c66cc6bd.png)
 
